@@ -70,6 +70,22 @@ npm start
 }
 ```
 
+### calculate_date
+現在または指定された日時から、指定された期間だけ前後の日時を計算します。
+
+パラメータ:
+- `amount` (必須): 加算・減算する数値（正の値で未来、負の値で過去）
+- `unit` (必須): 時間の単位（"seconds", "minutes", "hours", "days", "weeks", "months", "years"）
+- `base_date` (オプション): 基準となる日時（ISO 8601形式）。指定しない場合は現在時刻を使用
+- `locale` (オプション): ロケール（例: "ja-JP", "en-US"、デフォルト: "ja-JP"）
+
+使用例:
+- 1日後: `{"amount": 1, "unit": "days"}`
+- 3日前: `{"amount": -3, "unit": "days"}`
+- 6時間後: `{"amount": 6, "unit": "hours"}`
+- 2週後: `{"amount": 2, "unit": "weeks"}`
+- 8年前: `{"amount": -8, "unit": "years"}`
+
 ### get_time_difference
 指定された日時と現在時刻の差を計算します。
 

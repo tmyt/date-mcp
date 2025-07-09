@@ -99,6 +99,101 @@ server.addTool({
 });
 
 server.addTool({
+  name: 'calculate_date',
+  description: '現在または指定された日時から、指定された期間だけ前後の日時を計算します。例: 1日後、3日前、6時間後、2週後、8年前など',
+  parameters: z.object({
+    amount: z.number().describe('加算・減算する数値（正の値で未来、負の値で過去）'),
+    unit: z.enum(['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years']).describe('時間の単位'),
+    base_date: z.string().optional().describe('基準となる日時 (ISO 8601形式)。指定しない場合は現在時刻を使用'),
+    locale: z.string().default('ja-JP').optional().describe('ロケール (例: "ja-JP", "en-US")')
+  }),
+  execute: async (args) => {
+    const { amount, unit, base_date, locale = 'ja-JP' } = args;
+    try {
+      const baseDate = base_date ? new Date(base_date) : new Date();
+      
+      if (base_date && isNaN(baseDate.getTime())) {
+        throw new Error('無効な日付形式です');
+      }
+
+      const resultDate = new Date(baseDate);
+      
+      switch (unit) {
+        case 'seconds':
+          resultDate.setSeconds(resultDate.getSeconds() + amount);
+          break;
+        case 'minutes':
+          resultDate.setMinutes(resultDate.getMinutes() + amount);
+          break;
+        case 'hours':
+          resultDate.setHours(resultDate.getHours() + amount);
+          break;
+        case 'days':
+          resultDate.setDate(resultDate.getDate() + amount);
+          break;
+        case 'weeks':
+          resultDate.setDate(resultDate.getDate() + (amount * 7));
+          break;
+        case 'months':
+          resultDate.setMonth(resultDate.getMonth() + amount);
+          break;
+        case 'years':
+          resultDate.setFullYear(resultDate.getFullYear() + amount);
+          break;
+      }
+
+      const direction = amount > 0 ? '後' : '前';
+      const absAmount = Math.abs(amount);
+      const unitJa = {
+        seconds: '秒',
+        minutes: '分',
+        hours: '時間',
+        days: '日',
+        weeks: '週間',
+        months: 'ヶ月',
+        years: '年'
+      }[unit];
+
+      const result = {
+        calculation: {
+          base_date: baseDate.toISOString(),
+          amount: amount,
+          unit: unit,
+          description: `${absAmount}${unitJa}${direction}`
+        },
+        result: {
+          iso: resultDate.toISOString(),
+          unix: Math.floor(resultDate.getTime() / 1000),
+          human: formatters.toLocaleDateString(resultDate, locale),
+          milliseconds: resultDate.getTime()
+        },
+        components: {
+          year: resultDate.getFullYear(),
+          month: resultDate.getMonth() + 1,
+          day: resultDate.getDate(),
+          hour: resultDate.getHours(),
+          minute: resultDate.getMinutes(),
+          second: resultDate.getSeconds(),
+          dayOfWeek: resultDate.getDay(),
+          weekOfYear: getWeekNumber(resultDate)
+        },
+        context: {
+          isWeekend: resultDate.getDay() === 0 || resultDate.getDay() === 6,
+          quarter: Math.floor((resultDate.getMonth() + 3) / 3),
+          dayOfYear: getDayOfYear(resultDate),
+          daysInMonth: new Date(resultDate.getFullYear(), resultDate.getMonth() + 1, 0).getDate(),
+          fromNow: getHumanReadableDiff(Math.abs(new Date().getTime() - resultDate.getTime()), new Date().getTime() > resultDate.getTime())
+        }
+      };
+
+      return JSON.stringify(result, null, 2);
+    } catch (error) {
+      return `エラーが発生しました: ${error instanceof Error ? error.message : '不明なエラー'}`;
+    }
+  }
+});
+
+server.addTool({
   name: 'get_time_difference',
   description: '指定された日時と現在時刻の差を計算します。過去や未来の日時との関係を理解するのに役立ちます。',
   parameters: z.object({

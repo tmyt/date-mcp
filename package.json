@@ -1,6 +1,6 @@
 {
   "name": "date-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server that provides current date/time information to AI agents",
   "main": "dist/index.js",
   "type": "module",
