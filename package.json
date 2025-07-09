@@ -4,7 +4,11 @@
   "description": "MCP server that provides current date/time information to AI agents",
   "main": "dist/index.js",
   "type": "module",
+  "bin": {
+    "date-mcp": "./dist/index.js"
+  },
   "scripts": {
+    "prepublishOnly": "npm run build",
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
@@ -18,6 +22,13 @@
   ],
   "author": "",
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "fastmcp": "^3.8.3",
     "zod": "^3.25.76"

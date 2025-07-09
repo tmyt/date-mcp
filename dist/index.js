@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { FastMCP } from 'fastmcp';
 import { z } from 'zod';
 const server = new FastMCP({
