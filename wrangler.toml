@@ -1,0 +1,17 @@
+name = "date-mcp"
+main = "src/entries/worker.ts"
+compatibility_date = "2024-01-01"
+
+[vars]
+# Environment variables can be added here if needed
+
+[build]
+command = "npm run build"
+
+# [[routes]] 
+# pattern = "date-mcp.example.com/*"
+# zone_name = "example.com"
+
+# For development
+# [env.dev]
+# name = "date-mcp-dev"

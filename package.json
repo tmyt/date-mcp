@@ -2,17 +2,20 @@
   "name": "date-mcp",
   "version": "1.1.0",
   "description": "MCP server that provides current date/time information to AI agents",
-  "main": "dist/index.js",
+  "main": "dist/entries/cli.js",
   "type": "module",
   "bin": {
-    "date-mcp": "./dist/index.js"
+    "date-mcp": "./dist/entries/cli.js"
   },
   "scripts": {
     "prepublishOnly": "npm run build",
     "build": "tsc",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
-    "test": "echo '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}' | tsx src/index.ts"
+    "dev": "tsx src/entries/cli.ts",
+    "dev:worker": "wrangler dev",
+    "start": "node dist/entries/cli.js",
+    "test": "echo '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"id\":1}' | tsx src/index.ts",
+    "deploy": "wrangler deploy",
+    "deploy:dev": "wrangler deploy --env dev"
   },
   "keywords": [
     "mcp",
@@ -30,12 +33,17 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "fastmcp": "^3.8.3",
+    "@hono/mcp": "^0.1.0",
+    "@hono/node-server": "^1.14.0",
+    "@modelcontextprotocol/sdk": "^1.0.6",
+    "hono": "^4.8.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
     "@types/node": "^20.11.5",
     "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "wrangler": "^4.0.0"
   }
 }
