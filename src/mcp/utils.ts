@@ -1,72 +1,107 @@
-export const formatters = {
-  toISOString: (date: Date) => date.toISOString(),
-  toUnixTimestamp: (date: Date) => Math.floor(date.getTime() / 1000),
-  toLocaleDateString: (date: Date, locale: string) => {
-    return date.toLocaleDateString(locale, {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      weekday: 'long',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      timeZoneName: 'long'
-    });
-  },
-  toRelativeTime: (date: Date) => {
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffSeconds = Math.floor(diffMs / 1000);
-    const diffMinutes = Math.floor(diffSeconds / 60);
-    const diffHours = Math.floor(diffMinutes / 60);
-    const diffDays = Math.floor(diffHours / 24);
-    
-    if (diffDays > 0) return `${diffDays}日前`;
-    if (diffHours > 0) return `${diffHours}時間前`;
-    if (diffMinutes > 0) return `${diffMinutes}分前`;
-    return '今';
-  }
-};
+import { DateTime, Duration } from 'luxon';
 
-export function getWeekNumber(date: Date): number {
-  const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
-  const pastDaysOfYear = (date.getTime() - firstDayOfYear.getTime()) / 86400000;
-  return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+// Time unit names for display
+export const timeUnits = {
+  seconds: 'second',
+  minutes: 'minute',
+  hours: 'hour',
+  days: 'day',
+  weeks: 'week',
+  months: 'month',
+  years: 'year'
+} as const;
+
+// Get week number for a DateTime
+export function getWeekNumber(dt: DateTime): number {
+  return dt.weekNumber;
 }
 
-export function getDayOfYear(date: Date): number {
-  const start = new Date(date.getFullYear(), 0, 0);
-  const diff = date.getTime() - start.getTime();
-  return Math.floor(diff / (1000 * 60 * 60 * 24));
+// Get day of year for a DateTime
+export function getDayOfYear(dt: DateTime): number {
+  return dt.ordinal;
 }
 
-export function getHumanReadableDiff(diffMs: number, isPast: boolean): string {
-  const units = [
-    { name: '年', ms: 365 * 24 * 60 * 60 * 1000 },
-    { name: 'ヶ月', ms: 30 * 24 * 60 * 60 * 1000 },
-    { name: '週間', ms: 7 * 24 * 60 * 60 * 1000 },
-    { name: '日', ms: 24 * 60 * 60 * 1000 },
-    { name: '時間', ms: 60 * 60 * 1000 },
-    { name: '分', ms: 60 * 1000 },
-    { name: '秒', ms: 1000 }
-  ];
+// Get human-readable time difference
+export function getHumanReadableDiff(dt1: DateTime, dt2: DateTime): string {
+  // Use Luxon's relative time formatting
+  return dt1.toRelative({ base: dt2 }) || 'now';
+}
 
-  for (const unit of units) {
-    const value = Math.floor(diffMs / unit.ms);
-    if (value > 0) {
-      return `${value}${unit.name}${isPast ? '前' : '後'}`;
-    }
+// Get date components for a given DateTime
+export function getDateComponents(dt: DateTime) {
+  return {
+    year: dt.year,
+    month: dt.month,
+    day: dt.day,
+    hour: dt.hour,
+    minute: dt.minute,
+    second: dt.second,
+    dayOfWeek: dt.weekday === 7 ? 0 : dt.weekday, // Convert Sunday from 7 to 0
+    weekOfYear: dt.weekNumber,
+    offset: -dt.offset, // Negate to match JavaScript's getTimezoneOffset convention
+  };
+}
+
+// Get date context information
+export function getDateContext(dt: DateTime) {
+  return {
+    isWeekend: dt.weekday >= 6, // Saturday = 6, Sunday = 7 in Luxon
+    quarter: dt.quarter,
+    dayOfYear: dt.ordinal,
+    daysInMonth: dt.daysInMonth,
+  };
+}
+
+// Format date information in various formats
+export function formatDateInfo(dt: DateTime, locale: string = 'ja-JP') {
+  return {
+    iso: dt.toISO() || '',
+    unix: Math.floor(dt.toSeconds()),
+    human: dt.setLocale(locale).toLocaleString(DateTime.DATETIME_FULL_WITH_SECONDS),
+    milliseconds: dt.toMillis(),
+  };
+}
+
+// Parse date with optional timezone fallback
+export function parseDateWithTimezone(dateStr: string, fallbackTimezone?: string): DateTime | null {
+  // Check if the string has explicit timezone information
+  const hasTimezone = /[+-]\d{2}:\d{2}|Z$/.test(dateStr);
+  
+  if (hasTimezone) {
+    // Parse with timezone info
+    return DateTime.fromISO(dateStr);
   }
   
-  return '今';
+  // No timezone in string, use fallback if provided
+  if (fallbackTimezone) {
+    // Parse as local time in the specified timezone
+    const dt = DateTime.fromISO(dateStr, { zone: 'UTC' }).setZone(fallbackTimezone, { keepLocalTime: true });
+    if (dt.isValid) return dt;
+  }
+  
+  // No fallback timezone, parse as local/UTC
+  return DateTime.fromISO(dateStr);
 }
 
-export const timeUnitJa = {
-  seconds: '秒',
-  minutes: '分',
-  hours: '時間',
-  days: '日',
-  weeks: '週間',
-  months: 'ヶ月',
-  years: '年'
-} as const;
+// Add duration to a DateTime
+export function addDuration(dt: DateTime, amount: number, unit: keyof typeof timeUnits): DateTime {
+  const durationObj: any = {};
+  durationObj[unit] = amount;
+  return dt.plus(Duration.fromObject(durationObj));
+}
+
+// Calculate the difference between two DateTimes
+export function calculateDifference(dt1: DateTime, dt2: DateTime) {
+  const diff = dt1.diff(dt2, ['years', 'months', 'days', 'hours', 'minutes', 'seconds', 'milliseconds']);
+  
+  return {
+    milliseconds: Math.abs(diff.milliseconds),
+    seconds: Math.floor(Math.abs(diff.as('seconds'))),
+    minutes: Math.floor(Math.abs(diff.as('minutes'))),
+    hours: Math.floor(Math.abs(diff.as('hours'))),
+    days: Math.floor(Math.abs(diff.as('days'))),
+    weeks: Math.floor(Math.abs(diff.as('weeks'))),
+    months: Math.floor(Math.abs(diff.as('months'))),
+    years: Math.floor(Math.abs(diff.as('years'))),
+  };
+}

@@ -1,6 +1,16 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { formatters, getWeekNumber, getDayOfYear, getHumanReadableDiff, timeUnitJa } from './utils.js';
+import { DateTime } from 'luxon';
+import { 
+  getHumanReadableDiff, 
+  timeUnits, 
+  getDateComponents, 
+  getDateContext, 
+  formatDateInfo, 
+  parseDateWithTimezone,
+  addDuration,
+  calculateDifference
+} from './utils.js';
 
 export function createDateMcpServer(timezone: string): McpServer {
   const server = new McpServer({
@@ -11,59 +21,28 @@ export function createDateMcpServer(timezone: string): McpServer {
   // Register tools
   server.tool(
     'get_current_time',
-    '現在の日時を取得します。複数のフォーマットで時刻情報を提供し、AIエージェントが時制を正しく理解できるようにします。',
+    'Get current date and time. Provides time information in multiple formats to help AI agents correctly understand temporal context.',
     {
-      timezone: z.string().optional().describe('タイムゾーン (例: "Asia/Tokyo", "America/New_York")。指定しない場合はサーバー設定のタイムゾーンを使用します。'),
-      locale: z.string().default('ja-JP').optional().describe('ロケール (例: "ja-JP", "en-US")。人間が読める形式の表示に使用されます。')
+      timezone: z.string().optional().describe('Timezone (e.g., "Asia/Tokyo", "America/New_York"). If not specified, uses the server-configured timezone.'),
+      locale: z.string().default('ja-JP').optional().describe('Locale (e.g., "ja-JP", "en-US"). Used for human-readable format display.')
     },
     async (args) => {
       const { timezone: requestTimezone, locale = 'ja-JP' } = args;
       const effectiveTimezone = requestTimezone || timezone;
       
       try {
-        const now = new Date();
+        // Get current time in the effective timezone
+        const now = DateTime.now().setZone(effectiveTimezone);
         
-        const timeInfo: any = {
-          current: {
-            iso: formatters.toISOString(now),
-            unix: formatters.toUnixTimestamp(now),
-            human: formatters.toLocaleDateString(now, locale),
-            milliseconds: now.getTime()
-          },
-          timezone: {
-            system: timezone,
-            requested: effectiveTimezone,
-            offset: now.getTimezoneOffset()
-          },
-          components: {
-            year: now.getFullYear(),
-            month: now.getMonth() + 1,
-            day: now.getDate(),
-            hour: now.getHours(),
-            minute: now.getMinutes(),
-            second: now.getSeconds(),
-            dayOfWeek: now.getDay(),
-            weekOfYear: getWeekNumber(now)
-          },
-          context: {
-            isWeekend: now.getDay() === 0 || now.getDay() === 6,
-            quarter: Math.floor((now.getMonth() + 3) / 3),
-            dayOfYear: getDayOfYear(now),
-            daysInMonth: new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
-          }
-        };
-
-        if (effectiveTimezone && effectiveTimezone !== timeInfo.timezone.system) {
-          try {
-            const tzDate = new Date(now.toLocaleString('en-US', { timeZone: effectiveTimezone }));
-            timeInfo.timezone.converted = {
-              iso: formatters.toISOString(tzDate),
-              human: formatters.toLocaleDateString(tzDate, locale)
-            };
-          } catch (error) {
-            timeInfo.timezone.error = `無効なタイムゾーン: ${effectiveTimezone}`;
-          }
+        if (!now.isValid) {
+          throw new Error(`Invalid timezone: ${effectiveTimezone}`);
         }
+        
+        const timeInfo = {
+          current: formatDateInfo(now, locale),
+          components: getDateComponents(now),
+          context: getDateContext(now)
+        };
 
         return {
           content: [{
@@ -75,7 +54,7 @@ export function createDateMcpServer(timezone: string): McpServer {
         return {
           content: [{
             type: 'text' as const,
-            text: `エラーが発生しました: ${error instanceof Error ? error.message : '不明なエラー'}`
+            text: `Error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`
           }]
         };
       }
@@ -84,81 +63,54 @@ export function createDateMcpServer(timezone: string): McpServer {
 
   server.tool(
     'calculate_date',
-    '現在または指定された日時から、指定された期間だけ前後の日時を計算します。例: 1日後、3日前、6時間後、2週後、8年前など',
+    'Calculate a date/time by adding or subtracting a specified duration from now or a given date. Examples: 1 day later, 3 days ago, 6 hours later, 2 weeks later, 8 years ago',
     {
-      amount: z.number().describe('加算・減算する数値（正の値で未来、負の値で過去）'),
-      unit: z.enum(['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years']).describe('時間の単位'),
-      base_date: z.string().optional().describe('基準となる日時 (ISO 8601形式)。指定しない場合は現在時刻を使用'),
-      locale: z.string().default('ja-JP').optional().describe('ロケール (例: "ja-JP", "en-US")')
+      amount: z.number().describe('Amount to add or subtract (positive for future, negative for past)'),
+      unit: z.enum(['seconds', 'minutes', 'hours', 'days', 'weeks', 'months', 'years']).describe('Time unit'),
+      base_date: z.string().optional().describe('Base date/time (ISO 8601 format). If not specified, uses current time'),
+      base_timezone: z.string().optional().describe('Timezone for base_date interpretation if ISO string lacks timezone (e.g., "Asia/Tokyo"). ISO timezone takes precedence if present.'),
+      target_timezone: z.string().optional().describe('Target timezone for output (e.g., "Asia/Tokyo", "America/New_York"). If not specified, uses the server-configured timezone.'),
+      locale: z.string().default('ja-JP').optional().describe('Locale (e.g., "ja-JP", "en-US")')
     },
     async (args) => {
-      const { amount, unit, base_date, locale = 'ja-JP' } = args;
+      const { amount, unit, base_date, base_timezone, target_timezone: requestTimezone, locale = 'ja-JP' } = args;
+      const effectiveTimezone = requestTimezone || timezone;
+      
       try {
-        const baseDate = base_date ? new Date(base_date) : new Date();
-        
-        if (base_date && isNaN(baseDate.getTime())) {
-          throw new Error('無効な日付形式です');
+        // Parse base date or use current time
+        let baseDateTime: DateTime;
+        if (base_date) {
+          const parsed = parseDateWithTimezone(base_date, base_timezone || timezone);
+          if (!parsed || !parsed.isValid) {
+            throw new Error('Invalid date format');
+          }
+          baseDateTime = parsed;
+        } else {
+          baseDateTime = DateTime.now().setZone(timezone);
         }
 
-        const resultDate = new Date(baseDate);
+        // Add the duration
+        const resultDateTime = addDuration(baseDateTime, amount, unit);
         
-        switch (unit) {
-          case 'seconds':
-            resultDate.setSeconds(resultDate.getSeconds() + amount);
-            break;
-          case 'minutes':
-            resultDate.setMinutes(resultDate.getMinutes() + amount);
-            break;
-          case 'hours':
-            resultDate.setHours(resultDate.getHours() + amount);
-            break;
-          case 'days':
-            resultDate.setDate(resultDate.getDate() + amount);
-            break;
-          case 'weeks':
-            resultDate.setDate(resultDate.getDate() + (amount * 7));
-            break;
-          case 'months':
-            resultDate.setMonth(resultDate.getMonth() + amount);
-            break;
-          case 'years':
-            resultDate.setFullYear(resultDate.getFullYear() + amount);
-            break;
-        }
-
-        const direction = amount > 0 ? '後' : '前';
+        // Convert to target timezone
+        const resultInTargetZone = resultDateTime.setZone(effectiveTimezone);
+        
+        const direction = amount > 0 ? 'later' : 'ago';
         const absAmount = Math.abs(amount);
-        const unitJa = timeUnitJa[unit] || '';
+        const unitName = timeUnits[unit] || '';
 
         const result = {
           calculation: {
-            base_date: baseDate.toISOString(),
+            base_date: baseDateTime.toISO() || '',
             amount: amount,
             unit: unit,
-            description: `${absAmount}${unitJa}${direction}`
+            description: `${absAmount} ${unitName}${absAmount !== 1 ? 's' : ''} ${direction}`
           },
-          result: {
-            iso: resultDate.toISOString(),
-            unix: Math.floor(resultDate.getTime() / 1000),
-            human: formatters.toLocaleDateString(resultDate, locale),
-            milliseconds: resultDate.getTime()
-          },
-          components: {
-            year: resultDate.getFullYear(),
-            month: resultDate.getMonth() + 1,
-            day: resultDate.getDate(),
-            hour: resultDate.getHours(),
-            minute: resultDate.getMinutes(),
-            second: resultDate.getSeconds(),
-            dayOfWeek: resultDate.getDay(),
-            weekOfYear: getWeekNumber(resultDate)
-          },
+          result: formatDateInfo(resultInTargetZone, locale),
+          components: getDateComponents(resultInTargetZone),
           context: {
-            isWeekend: resultDate.getDay() === 0 || resultDate.getDay() === 6,
-            quarter: Math.floor((resultDate.getMonth() + 3) / 3),
-            dayOfYear: getDayOfYear(resultDate),
-            daysInMonth: new Date(resultDate.getFullYear(), resultDate.getMonth() + 1, 0).getDate(),
-            fromNow: getHumanReadableDiff(Math.abs(new Date().getTime() - resultDate.getTime()), new Date().getTime() > resultDate.getTime())
+            ...getDateContext(resultInTargetZone),
+            fromNow: getHumanReadableDiff(resultInTargetZone, DateTime.now().setZone(effectiveTimezone))
           }
         };
 
@@ -172,7 +124,7 @@ export function createDateMcpServer(timezone: string): McpServer {
         return {
           content: [{
             type: 'text' as const,
-            text: `エラーが発生しました: ${error instanceof Error ? error.message : '不明なエラー'}`
+            text: `Error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`
           }]
         };
       }
@@ -181,43 +133,42 @@ export function createDateMcpServer(timezone: string): McpServer {
 
   server.tool(
     'get_time_difference',
-    '指定された日時と現在時刻の差を計算します。過去や未来の日時との関係を理解するのに役立ちます。',
+    'Calculate the difference between a specified date/time and the current time. Useful for understanding relationships with past or future dates.',
     {
-      target_date: z.string().describe('比較対象の日時 (ISO 8601形式)'),
-      unit: z.enum(['seconds', 'minutes', 'hours', 'days', 'all']).default('all').describe('表示する単位')
+      reference_date: z.string().describe('Reference date/time for comparison (ISO 8601 format)'),
+      reference_timezone: z.string().optional().describe('Timezone for reference_date interpretation if ISO string lacks timezone (e.g., "Asia/Tokyo"). ISO timezone takes precedence if present.'),
+      unit: z.enum(['seconds', 'minutes', 'hours', 'days', 'all']).default('all').describe('Unit to display'),
+      target_timezone: z.string().optional().describe('Target timezone for output (e.g., "Asia/Tokyo", "America/New_York"). If not specified, uses the server-configured timezone.'),
+      locale: z.string().default('ja-JP').optional().describe('Locale (e.g., "ja-JP", "en-US")')
     },
     async (args) => {
-      const { target_date, unit = 'all' } = args;
+      const { reference_date, reference_timezone, unit = 'all', target_timezone: requestTimezone, locale = 'ja-JP' } = args;
+      const effectiveTimezone = requestTimezone || timezone;
+      
       try {
-        const now = new Date();
-        const target = new Date(target_date);
+        // Get current time in effective timezone
+        const now = DateTime.now().setZone(effectiveTimezone);
         
-        if (isNaN(target.getTime())) {
-          throw new Error('無効な日付形式です');
+        // Parse reference date
+        const parsed = parseDateWithTimezone(reference_date, reference_timezone || timezone);
+        if (!parsed || !parsed.isValid) {
+          throw new Error('Invalid date format');
         }
-
-        const diffMs = now.getTime() - target.getTime();
-        const isPast = diffMs > 0;
-        const absDiffMs = Math.abs(diffMs);
         
-        const diff = {
-          milliseconds: absDiffMs,
-          seconds: Math.floor(absDiffMs / 1000),
-          minutes: Math.floor(absDiffMs / (1000 * 60)),
-          hours: Math.floor(absDiffMs / (1000 * 60 * 60)),
-          days: Math.floor(absDiffMs / (1000 * 60 * 60 * 24)),
-          weeks: Math.floor(absDiffMs / (1000 * 60 * 60 * 24 * 7)),
-          months: Math.floor(absDiffMs / (1000 * 60 * 60 * 24 * 30)),
-          years: Math.floor(absDiffMs / (1000 * 60 * 60 * 24 * 365))
-        };
-
+        // Convert to effective timezone for display
+        const target = parsed.setZone(effectiveTimezone);
+        
+        // Calculate differences
+        const diff = calculateDifference(now, target);
+        const isPast = now > target;
+        
         const result = {
-          target_date: target.toISOString(),
-          current_date: now.toISOString(),
+          reference_date: formatDateInfo(target, locale),
+          current_date: formatDateInfo(now, locale),
           is_past: isPast,
-          relative: isPast ? '過去' : '未来',
+          relative: isPast ? 'past' : 'future',
           difference: unit === 'all' ? diff : { [unit]: diff[unit as keyof typeof diff] },
-          human_readable: getHumanReadableDiff(absDiffMs, isPast)
+          human_readable: getHumanReadableDiff(target, now)
         };
 
         return {
@@ -230,7 +181,64 @@ export function createDateMcpServer(timezone: string): McpServer {
         return {
           content: [{
             type: 'text' as const,
-            text: `エラーが発生しました: ${error instanceof Error ? error.message : '不明なエラー'}`
+            text: `Error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`
+          }]
+        };
+      }
+    }
+  );
+
+  server.tool(
+    'convert_timezone',
+    'Convert a date/time to a different timezone. The input date should include timezone information in the ISO string.',
+    {
+      source_date: z.string().describe('Date/time to convert (ISO 8601 format)'),
+      source_timezone: z.string().optional().describe('Timezone for source_date interpretation if ISO string lacks timezone (e.g., "Asia/Tokyo"). ISO timezone takes precedence if present.'),
+      target_timezone: z.string().describe('Target timezone (e.g., "Asia/Tokyo", "America/New_York")'),
+      locale: z.string().default('ja-JP').optional().describe('Locale (e.g., "ja-JP", "en-US")')
+    },
+    async (args) => {
+      const { source_date, source_timezone, target_timezone, locale = 'ja-JP' } = args;
+      
+      try {
+        // Parse source date
+        const parsed = parseDateWithTimezone(source_date, source_timezone || timezone);
+        if (!parsed || !parsed.isValid) {
+          throw new Error('Invalid date format');
+        }
+        
+        // Convert to target timezone
+        const targetDateTime = parsed.setZone(target_timezone);
+        
+        if (!targetDateTime.isValid) {
+          throw new Error(`Invalid target timezone: ${target_timezone}`);
+        }
+        
+        const result = {
+          input: {
+            iso: parsed.toISO() || '',
+            unix: Math.floor(parsed.toSeconds()),
+            milliseconds: parsed.toMillis()
+          },
+          output: {
+            timezone: target_timezone,
+            formatted: formatDateInfo(targetDateTime, locale),
+            components: getDateComponents(targetDateTime),
+            context: getDateContext(targetDateTime)
+          }
+        };
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify(result, null, 2)
+          }]
+        };
+      } catch (error) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`
           }]
         };
       }
